@@ -28,6 +28,7 @@ MVP 阶段实现能力：
 
 - Rill 当前处于规划阶段；仓库里的 active spec 只定义了目标能力，尚无 `src` 实现代码。Source: `specs/change/20260507-rill-mvp/spec.md:8-19`
 - Rill 目标是模仿 Synclo，在 Hermes Agent 中实现插件能力：接收外部事件、事件命中时唤醒 Hermes agent、注入事件上下文、把 agent 结果发送到 Feishu channel。Source: `specs/change/20260507-rill-mvp/spec.md:10-19`
+- Rill MVP 范围收敛为目标 GitHub 仓库新建 issue 或 PR 时，分析内容并发送一条飞书群消息。Source: `specs/change/20260507-rill-mvp/spec.md:14-21`
 - 现有需求草稿把 Hermes 映射为：plugin 注册 Rill tools，Gateway 统一接收 channel/webhook/cron/API 事件，Feishu adapter 发送 DM 或群聊，`pre_llm_call` hook 在 agent 处理前注入 Rill 上下文，`send_message` / Gateway delivery 发送结果。Source: `specs/change/20260507-rill-mvp/rill-init.md:35-41`
 - Hermes 插件以目录形式提供 `plugin.yaml` 和 `__init__.py`，`register(ctx)` 负责注册工具、hook、命令等能力；用户插件可放在 `~/.hermes/plugins/`，项目插件可放在 `.hermes/plugins/` 并通过 `HERMES_ENABLE_PROJECT_PLUGINS=true` 启用。Source: `/Users/william/projects/hermes-agent/website/docs/user-guide/features/plugins.md:21-31,45-90,92`
 - Hermes 插件 API 支持 `ctx.register_tool`、`ctx.register_hook`、`ctx.register_command`、`ctx.dispatch_tool`、`ctx.inject_message`、`ctx.register_platform` 等扩展点。Source: `/Users/william/projects/hermes-agent/website/docs/user-guide/features/plugins.md:94-113`
@@ -46,6 +47,12 @@ MVP 阶段实现能力：
 - Hermes DeliveryRouter 能解析 `origin`、`local`、`platform`、`platform:chat_id`、`platform:chat_id:thread_id` 目标，并调用对应 platform adapter delivery。Source: `/Users/william/projects/hermes-agent/gateway/delivery.py:1-9,28-47,50-95,129-169`
 - Hermes Feishu adapter 的 outbound `send` 支持 `chat_id`、content、reply target 和 metadata；会构造 post/text payload，post payload 被 Feishu 拒绝时 fallback 到 plain text，并返回 `SendResult`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1693-1752`
 - Hermes 的插件级 `ctx.inject_message` 只支持 CLI active conversation；gateway mode 下没有 CLI reference 时返回 false，因此 Rill 在 Gateway 里唤醒 agent 应走 Gateway message/session 路径。Source: `/Users/william/projects/hermes-agent/hermes_cli/plugins.py:275-301`
+- Hermes 已有 webhook platform：route 可配置 HMAC secret、事件过滤、prompt 模板、deliver 目标和 deliver_extra；安全能力包括 route-level secret、rate limit、idempotency cache、body size limit。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:1-27,68-80`
+- Hermes GitHub PR webhook 指南展示了 `platforms.webhook.extra.routes.<name>` 配置：监听 `pull_request`，把 GitHub payload 字段渲染到 prompt，并用 `deliver: github_comment` 输出。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-77`
+- GitHub webhook payload 包含 PR 元数据但不包含 diff；Hermes 示例让 agent 用 `gh pr diff {number} --repo {repository.full_name}` 拉取实际 diff。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:55-71,90-91`
+- Hermes webhook adapter 为每个 webhook 使用 `webhook:{route}:{delivery_id}` 作为 chat_id，构造 `MessageEvent` 后异步交给 gateway message handler，HTTP 侧立即返回 202。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:493-549`
+- Hermes webhook adapter 的 cross-platform delivery 可把 agent response 发到任意已连接 platform；当 deliver target 为 `feishu` 时会取 `deliver_extra.chat_id`，没有 chat_id 时使用该 platform 的 home channel。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:728-771`
+- Hermes `hermes webhook subscribe` 会把动态 route 写入订阅配置，字段包含 events、secret、prompt、skills、deliver，并默认 `deliver: log`。Source: `/Users/william/projects/hermes-agent/hermes_cli/webhook.py:115-157`
 - Synclo 的插件入口使用 `definePluginEntry`，注册 `synclo_watch`、`synclo_task`、`synclo_update`、`synclo_search` 等工具，并在注册时初始化数据库。Source: `/Users/william/projects/synclo/src/plugin/index.ts:360-444,446-570`
 - `synclo_watch` 创建持久 watcher：写入 `content`、订阅事件列表 `events`、上下文、owner、deadline、agent/session 来源。Source: `/Users/william/projects/synclo/src/plugin/index.ts:402-430`
 - Synclo 在 `before_prompt_build` hook 中根据 agent identity 收集上下文，把系统指导和动态 context 注入 prompt。Source: `/Users/william/projects/synclo/src/plugin/index.ts:780-837`
@@ -56,6 +63,11 @@ MVP 阶段实现能力：
 - Synclo 的 `createTrigger` 会把 node、trigger、事件 payload、历史 trigger 写入 `injected_context`，供后续 agent 处理。Source: `/Users/william/projects/synclo/src/core/create-trigger.ts:56-105`
 - Synclo 的 GitHub webhook 只接受 `POST /webhook`，支持 direct mode 签名校验，解析 GitHub event/delivery 后先返回 200，再处理 webhook 事件并触发 batch/dispatch。Source: `/Users/william/projects/synclo/src/sources/github/webhook.ts:201-243,255-270`
 - GitHub webhook 会把 issues、issue_comment、pull_request、review 等 GitHub payload 规范化为 `github:<repo>:...` 事件类型。Source: `/Users/william/projects/synclo/src/sources/github/webhook.ts:295-371,375-381`
+- Synclo GitHub source 支持 `poll`、`webhook`、`both` 三种模式；配置必须包含 enabled repos，webhook 和 poller 共享 `GitHubEventHandler`。Source: `/Users/william/projects/synclo/src/sources/github/index.ts:1-9,28-60,83-84`
+- Synclo 的 GitHub webhook 对 `issues` 的 `opened` action 生成 `github:<repo>:issue:opened`，对 `pull_request` 的 `opened` action 生成 `github:<repo>:pr:opened`。Source: `/Users/william/projects/synclo/src/sources/github/webhook.ts:295-323,337-371`
+- Synclo 的 normalizer 会提取 issue/PR 的 repo、number、author、title、body、url、labels、state、created/updated metadata；PR 还包含 draft、reviewers、head/base、additions/deletions 等字段。Source: `/Users/william/projects/synclo/src/sources/github/normalize.ts:33-53,101-124`
+- Synclo `handleIssue` / `handlePR` 在首次见到新 issue/PR 时创建 root node，并 emit 标准 GitHub event；loop prevention 会跳过 bot 自己的动作。Source: `/Users/william/projects/synclo/src/sources/github/handler.ts:950-985,1048-1084`
+- Synclo root node 会把 issue/PR title、repo、entity、number、github_id、url、author、body、metadata 写入 node context。Source: `/Users/william/projects/synclo/src/sources/github/tree.ts:100-135`
 - Synclo 的 GitHub handler 会先运行 EventProcessor，再读取 pending triggers，按 sessionKey 串行、不同 sessionKey 并行地调用 Gateway 触发 agent。Source: `/Users/william/projects/synclo/src/sources/github/handler.ts:451-482,524-540,945-947`
 - Synclo dispatch 失败时会把 trigger 重置为 pending，让后续 retry 周期继续处理。Source: `/Users/william/projects/synclo/src/sources/github/handler.ts:510-522,924-934`
 - Synclo 的 Gateway client 支持两种触发 agent 模式：插件模式通过 `api.runtime.subagent.run()`，standalone 模式通过 OpenClaw CLI fallback。Source: `/Users/william/projects/synclo/src/sources/github/gateway.ts:1-7`
@@ -71,6 +83,9 @@ MVP 阶段实现能力：
 - **Hermes plugin-native Rill**：把 Rill 做成 Hermes general plugin，通过 `plugin.yaml` + `register(ctx)` 注册 `rill_watch` / `rill_update` / `rill_search`、`pre_llm_call` 和必要的 gateway hook。Source: `/Users/william/projects/hermes-agent/website/docs/user-guide/features/plugins.md:21-31,94-113`; `/Users/william/projects/hermes-agent/hermes_cli/plugins.py:237-273,532-547`
 - **Gateway ingress hook / adapter 入口**：Rill 可先用 `pre_gateway_dispatch` 获取消息事件并做 skip/rewrite/allow，也可通过独立 webhook/cron/API ingress 写入 Rill 事件队列，再复用 Hermes session key 触发 agent。Source: `/Users/william/projects/hermes-agent/gateway/run.py:4856-4914`; `/Users/william/projects/hermes-agent/website/docs/developer-guide/gateway-internals.md:52-78`
 - **Hermes 发送路径**：Rill 结果可由 agent 调用 `send_message`，也可由 Rill 后台使用 DeliveryRouter/Feishu adapter 直接 delivery；前者复用 agent 权限和工具，后者适合后台系统消息。Source: `/Users/william/projects/hermes-agent/tools/send_message_tool.py:117-145,1664-1788`; `/Users/william/projects/hermes-agent/gateway/delivery.py:129-169`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1693-1752`
+- **MVP 快速路径：Hermes webhook route → agent → Feishu delivery**：配置 webhook route 监听 GitHub `issues` 和 `pull_request`，prompt 模板要求 agent 分析 title/body/url 并按指定格式输出，`deliver: feishu` + `deliver_extra.chat_id` 把最终 response 发到飞书群。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:1-19,493-549,728-771`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
+- **MVP Synclo-style 路径：GitHub event queue → watcher/trigger → agent → Feishu**：沿用 Synclo 标准事件与持久化能力，目标仓库新 issue/PR 进入事件表后匹配 watcher 并唤醒 agent；适合后续扩展 watcher、retry、状态追踪。Source: `/Users/william/projects/synclo/src/sources/github/webhook.ts:295-371`; `/Users/william/projects/synclo/src/sources/github/handler.ts:950-985,1048-1084`; `/Users/william/projects/synclo/src/daemon/event-processor.ts:87-103`
+- **MVP deliver_only 快速通知**：Hermes webhook 支持 `deliver_only`，可零 LLM 成本直接投递模板消息；该路径可用于后续健康检查或调试，MVP 的“分析 issue/PR 内容”需要 agent reasoning。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:16-19,646-672`
 - **Agent 自行发送 Feishu**：Synclo 的 GitHub handler 把 notify target 放进 agent 任务消息，让 agent 使用对应 channel tool 发送；Rill 可改用 Hermes Feishu adapter / Gateway delivery 统一发送。Source: `/Users/william/projects/synclo/src/sources/github/handler.ts:833-857`; `specs/change/20260507-rill-mvp/rill-init.md:39-41`
 
 ### Constraints & Dependencies
@@ -82,6 +97,9 @@ MVP 阶段实现能力：
 - Hermes user/project general plugins 受 `plugins.enabled` 控制；Rill 安装后需要明确启用方式、配置位置和必要 env。Source: `/Users/william/projects/hermes-agent/website/docs/user-guide/features/plugins.md:143-164`
 - Hermes 的 plugin hook callback 异常会被捕获并记录 warning；Rill 的关键事件处理需要在自己的队列/processor 中持久化失败状态，保障可观测失败和 retry。Source: `/Users/william/projects/hermes-agent/hermes_cli/plugins.py:1089-1123`; `/Users/william/projects/hermes-agent/gateway/hooks.py:158-181`
 - Feishu 发送可走 `send_message` 或 Feishu adapter；两条路径都返回结构化 success/error，Rill 需要把失败结果写入 trigger/delivery 状态。Source: `/Users/william/projects/hermes-agent/tools/send_message_tool.py:167-221,1664-1788`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
+- MVP 需要 GitHub repo webhook 配置：Payload URL 指向 Hermes webhook route，Content-Type 为 JSON，secret 与 route secret 一致，选择 Pull requests 和 Issues 事件。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:117-124`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:9-15,21-27`
+- MVP 需要 Feishu gateway 处于连接状态；webhook cross-platform delivery 查找目标 platform adapter，adapter 缺失会返回 `Platform <name> not connected`，缺少 chat_id 且没有 home channel 会返回错误。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:728-763`
+- MVP 的 PR 深度分析需要 GitHub CLI 或其他 GitHub API 能力，因为 webhook payload 提供元数据，diff 需要 agent 额外获取。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:68-91`
 - 当前 Rill 仓库没有实现代码可复用，下一阶段需要确认 Hermes 内部 API 的稳定性边界、Rill 是否调用 Gateway private method、以及是否新增公开 wake/dispatch API。Source: `specs/change/20260507-rill-mvp/spec.md:8-19`; `/Users/william/projects/hermes-agent/gateway/run.py:4856-4867`
 - Synclo 的实现强依赖数据库状态机：`events.status`、`triggers.status`、session identity、node/watch 表；Rill 也需要等价的持久化或明确使用 Hermes 提供的持久层。Source: `/Users/william/projects/synclo/src/daemon/event-processor.ts:24-64`; `/Users/william/projects/synclo/src/core/context.ts:62-83`
 - 事件接收路径需要幂等、claim、retry/backoff、dispatch failure 重新 pending，避免事件丢失或重复处理。Source: `/Users/william/projects/synclo/src/daemon/event-processor.ts:34-63`; `/Users/william/projects/synclo/src/sources/github/handler.ts:501-522`
@@ -102,6 +120,12 @@ MVP 阶段实现能力：
 - `/Users/william/projects/hermes-agent/tools/send_message_tool.py:117-221,1664-1788` - `send_message` tool schema、target 解析、可用性 gate 与注册。
 - `/Users/william/projects/hermes-agent/gateway/delivery.py:1-9,28-95,129-169` - Delivery target parsing 与 delivery router。
 - `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1693-1752` - Feishu adapter outbound send 行为。
+- `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:1-27,493-549,646-771` - Hermes webhook route、安全、agent dispatch、direct/cross-platform delivery。
+- `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-91,117-124` - GitHub webhook route 配置、PR payload 限制与 GitHub Webhook 设置。
+- `/Users/william/projects/hermes-agent/hermes_cli/webhook.py:115-157` - 动态 webhook subscribe route 字段。
+- `/Users/william/projects/synclo/src/sources/github/index.ts:1-9,28-60,83-84` - Synclo GitHub source 模式与 repo 配置。
+- `/Users/william/projects/synclo/src/sources/github/normalize.ts:33-53,101-124` - issue/PR payload 标准化字段。
+- `/Users/william/projects/synclo/src/sources/github/tree.ts:100-135` - issue/PR root node context 结构。
 - `/Users/william/projects/synclo/src/plugin/index.ts:360-444,780-837,896-909` - Synclo 插件入口、工具注册、prompt hook、session identity hook。
 - `/Users/william/projects/synclo/src/core/context.ts:38-83,136-175` - pending trigger 原子领取与上下文结构。
 - `/Users/william/projects/synclo/src/core/match-nodes.ts:29-145,167-175` - 事件到 watcher 的精确/通配/语义匹配。
