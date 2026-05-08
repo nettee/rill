@@ -49,3 +49,15 @@
 - 4.6 GitHub 自动 ping delivery 验证通过：issue hook delivery id `3818703399015153700`，event=`ping`，status=`OK`，status_code=200；PR hook delivery id `3818703403299635000`，event=`ping`，status=`OK`，status_code=200。
 
 偏差/坑：第一次创建脚本缺少 Ruby `shellwords` 依赖，命令在调用 GitHub API 前失败，未创建 webhook；补充 `require "shellwords"` 后创建成功。
+
+## Step 5: Agent 自动触发 issue webhook 验证
+
+状态：完成，等待 Step 6 人工确认飞书群消息内容。
+
+- 5.1 已创建测试 issue：`https://github.com/nettee/rill/issues/1`，标题 `[Hermes MVP Test] issue opened`，作者 `nettee`，创建时间 `2026-05-08T06:39:56Z`。
+- 5.2 GitHub issue webhook recent delivery 确认收到 `issues` / `opened`。
+- 5.3 Delivery HTTP response：hook id `619555132`，delivery id `3818703523336421400`，status=`OK`，status_code=`202`，delivered_at=`2026-05-08T06:39:58.56Z`。
+- 5.3 Hermes Gateway 日志确认收到事件：`[webhook] POST event=issues route=github-issue-analysis prompt_len=540 delivery=babc459e-4aa8-11f1-8c01-8d9fc41fa120`；随后 agent response ready，platform=`webhook`，time=`33.2s`。
+- 5.4 已在测试 issue 添加验证评论：`https://github.com/nettee/rill/issues/1#issuecomment-4404123453`。
+
+偏差/坑：`gh issue create --json` 在当前 GitHub CLI 版本中不可用，改为创建后用 `gh issue view --json` 读取 issue 元数据。
