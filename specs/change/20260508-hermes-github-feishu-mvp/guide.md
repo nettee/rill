@@ -183,3 +183,141 @@ GitHub repository webhook 只能按事件类型过滤，`opened` 这种 action �
 - Hermes `actions` 过滤功能目前还在上游 PR 阶段：`https://github.com/NousResearch/hermes-agent/pull/21744`。使用未包含该补丁的 Hermes 版本时，`actions: [opened]` 配置不会生效，PR `synchronize` 等 action 仍可能触发 agent 和飞书投递。
 - GitHub redelivery API 可能需要额外 `admin:repo_hook` scope；测试时可以创建新的 issue/PR 触发新 delivery。
 - Cloudflare Tunnel 临时 URL 会变化；URL 变化后需要同步更新 GitHub webhook Payload URL。
+
+## 原理说明：为什么配置 `deliver`，并在 prompt 中要求 agent 只输出文本
+
+Hermes webhook route 把一次外部 webhook 处理拆成两个阶段：
+
+```text
+GitHub webhook
+→ Hermes webhook route
+→ route 使用 prompt 调用 Hermes agent
+→ agent 返回 final answer
+→ route 的 deliver 配置把 final answer 投递到目标平台
+```
+
+因此 `prompt` 与 `deliver` 分别负责两件事：
+
+- `prompt`：定义 agent 如何理解 GitHub payload，以及最终生成什么分析内容。
+- `deliver` / `deliver_extra`：定义 agent 的最终回答发送到哪里，例如发送到飞书的哪个 `chat_id`。
+
+当前配置里：
+
+```yaml
+prompt: |
+  Return only the Chinese analysis text as your final answer.
+  The webhook delivery layer will send your final answer to Feishu.
+deliver: feishu
+deliver_extra:
+  chat_id: oc_3218e07b3504dd0635bbd10fd4872cab
+```
+
+含义是：agent 只负责产出中文分析正文；Hermes webhook delivery 层负责把这段正文发送到指定飞书群。
+
+这样设计的核心价值是职责清晰：
+
+- agent 负责认知任务：总结 issue/PR、判断风险、给出建议动作。
+- Hermes 平台层负责工程任务：验签、路由、限流、投递、记录日志。
+- 飞书目标群由配置控制，行为可审计、可复现。
+
+prompt 中需要明确要求 agent “只输出分析文本”，因为 `deliver: feishu` 已经承担发送动作。如果 prompt 写成 “Send to Feishu”，agent 可能会主动调用飞书工具，随后 webhook delivery 又会把 agent 的最终确认语发送到目标群，导致目标群只收到类似“已发送到 Feishu 群”的确认文本。正确分工是：agent 输出正文，delivery 发送正文。
+
+## Agent 智能判断通知的后续扩展方向
+
+当前 MVP 使用固定投递模式：route 命中、agent 生成 final answer 后，`deliver: feishu` 会把 final answer 发到飞书。`actions: [opened]` 负责在 agent dispatch 前过滤，只让新建 issue/PR 进入分析与投递流程。
+
+如果希望 agent 根据事件内容智能判断是否通知飞书群，可以考虑以下扩展方式。
+
+### 方式一：去掉 `actions`，保留固定 `deliver`
+
+适用于希望所有相关事件都进入 agent，由 agent 决定消息轻重，飞书群仍然保留一条消息记录的场景。
+
+```yaml
+events:
+- pull_request
+prompt: |
+  GitHub pull request webhook received. action={action}
+
+  Decide whether this event needs human attention.
+  Return only the Chinese message that should be sent to Feishu.
+deliver: feishu
+deliver_extra:
+  chat_id: oc_3218e07b3504dd0635bbd10fd4872cab
+```
+
+在这种模式下，`opened`、`synchronize`、`ready_for_review` 等 action 都会触发 agent，且 final answer 都会发送到飞书。agent 可以输出“需要重点 review”的分析，也可以输出“本次同步风险较低”的低噪声说明。
+
+### 方式二：移除固定 `deliver`，让 agent 主动决定是否调用飞书工具
+
+适用于 MVP 试验“agent 自主决定是否发群”的场景。
+
+配置思路是删除：
+
+```yaml
+deliver: feishu
+deliver_extra:
+  chat_id: ...
+```
+
+并在 prompt 中写清楚判断规则与目标群：
+
+```text
+Decide whether this event should notify the Feishu group.
+
+Send a Feishu message only when the event needs human attention.
+Use target chat_id: oc_3218e07b3504dd0635bbd10fd4872cab.
+
+If no notification is needed, return a concise internal note only.
+```
+
+这种方式把“是否发送”交给 agent 的工具调用决策。它适合快速验证智能判断效果，但稳定性依赖 agent 是否严格遵循 prompt，并且需要确保 agent 使用正确的目标 `chat_id`。
+
+### 方式三：增加 conditional delivery 能力
+
+适用于希望保留配置式 delivery，同时让 agent 智能决定是否发送的生产化方案。该方式需要扩展 Hermes 代码。
+
+理想行为是让 agent 返回结构化结果：
+
+```json
+{
+  "notify": true,
+  "message": "需要发送到飞书群的中文分析文本"
+}
+```
+
+或者：
+
+```json
+{
+  "notify": false,
+  "reason": "PR synchronize 只是同步提交，无需通知"
+}
+```
+
+然后 Hermes delivery 层在发送前解析该结构：
+
+```text
+notify=true  → 发送 message 到飞书
+notify=false → 跳过飞书发送，并记录 skipped / ignored
+```
+
+可能的配置形态：
+
+```yaml
+deliver: feishu
+deliver_extra:
+  chat_id: oc_3218e07b3504dd0635bbd10fd4872cab
+  conditional: true
+  notify_field: notify
+  message_field: message
+```
+
+该扩展需要覆盖以下行为：
+
+- `notify=true` 时发送 `message`。
+- `notify=false` 时跳过发送。
+- JSON 无效时显式失败，避免误发或静默吞错。
+- 缺少必需字段时显式失败。
+- 默认保持现有 `deliver: feishu` 固定投递行为。
+
+推荐演进路径：MVP 使用 `actions: [opened]` 固定过滤；需要智能判断时先用方式二验证 prompt 与 agent 决策效果；验证稳定后，把方式三做成 Hermes 的 conditional delivery 能力。
