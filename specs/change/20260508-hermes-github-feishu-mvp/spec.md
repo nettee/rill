@@ -1,8 +1,8 @@
 ---
-id: "20260508-hermes-github-feishu-mvp"
-name: "Hermes Github Feishu Mvp"
-status: new
-created: "2026-05-08"
+id: 20260508-hermes-github-feishu-mvp
+name: Hermes Github Feishu Mvp
+status: designed
+created: '2026-05-08'
 ---
 
 ## Overview
@@ -35,38 +35,222 @@ MVP 范围：
 
 ## Research
 
-<!-- What have we found out? What are the alternatives considered? -->
+### Existing System
+
+- 当前 Rill 仓库只包含 specs 与项目元数据，尚无实现代码、测试、运行配置可改。Source: `.` directory entries; glob `src/**`, `**/*.{ts,tsx,js,py,go,rs}`, `**/*test*`
+- 当前 active spec 的 MVP 目标是 GitHub issue/PR opened 触发 Hermes agent 分析，并把结构化消息发送到指定飞书群。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:8-35`
+- Hermes 已有通用 webhook platform adapter，可接收 GitHub/GitLab/JIRA/Stripe 等 POST，校验 HMAC，按 payload 渲染 prompt，并把 response 发回来源或配置的其他平台。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:1-19`
+- Webhook route 配置位于 `platforms.webhook.extra.routes`，route 字段包含 `events`、`secret`、`prompt`、`skills`、`deliver`、`deliver_extra`、`deliver_only`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:8-19`
+- Webhook 安全与可靠性已有 route-level secret、rate limit、idempotency cache、body size limit；startup 会校验每个 route 有 secret。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:21-27,119-127`
+- Webhook HTTP endpoint 为 `/webhooks/{route_name}`，health endpoint 为 `/health`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:142-145,254-256`
+- Webhook adapter 会先校验 content length、HMAC、rate limit，再解析 JSON/form body；GitHub event 类型来自 `X-GitHub-Event` header。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:304-364`
+- `events` 过滤只匹配事件类型 header，例如 `issues` 或 `pull_request`；GitHub payload 的 `action` 由 prompt 或后续处理逻辑负责约束。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-373`
+- Prompt template 支持 `{field}` 与 `{nested.field}` dot notation，也支持 `{__raw__}` 输出截断后的完整 payload。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:590-628`
+- Agent 模式下，webhook adapter 为每个 delivery 构造 `webhook:{route}:{delivery_id}` chat_id，生成 `MessageEvent`，并异步调用 gateway message handler，HTTP 侧立即返回 202。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:493-549`
+- `deliver_only` 可跳过 agent，把渲染后的 prompt 直接投递；该能力适合零 LLM 成本通知，当前 MVP 的“分析”目标需要 agent 模式。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:435-479`
+- Webhook response delivery 支持 `github_comment` 与 cross-platform delivery；`feishu` 是内置可识别 deliver platform。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:179-228`
+- Cross-platform delivery 会查找目标 platform adapter；缺少 gateway runner、未知 platform、platform 未连接、缺少 `chat_id` 且没有 home channel 时返回结构化 `SendResult` error。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:728-763`
+- Feishu adapter outbound `send` 需要已连接 client；会格式化/分片消息，优先发送 post payload，post payload 被 Feishu 拒绝时回退 plain text，最终返回 `SendResult`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
+- Hermes GitHub PR webhook 指南展示了 route 配置：启用 webhook platform，route 监听 `pull_request`，prompt 从 payload 取 PR 标题、作者、描述、URL，delivery 示例为 `github_comment`。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-77`
+- GitHub webhook payload 提供 PR 元数据；代码 diff 需要 agent 通过 `gh pr diff {number} --repo {repository.full_name}` 或 GitHub API 另取。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:55-91`
+- GitHub repo webhook 设置需要 Payload URL 指向 `/webhooks/<route>`，Content-Type 为 JSON，Secret 与 route secret 一致，并选择 Pull requests / Issues 事件。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:117-124`
+- `hermes webhook subscribe` 可写入动态 route，字段包含 `events`、`secret`、`prompt`、`skills`、`deliver`，默认 `deliver: log`。Source: `/Users/william/projects/hermes-agent/hermes_cli/webhook.py:137-157`
+- Hermes DeliveryRouter 支持 `platform`、`platform:chat_id`、`platform:chat_id:thread_id` 等 target 形态，并把内容发送给对应 adapter。Source: `/Users/william/projects/hermes-agent/gateway/delivery.py:45-95,129-169`
+- 之前的 Rill MVP research 已记录：Hermes 原生快速路径是 `webhook route → agent → Feishu delivery`，可通过 `deliver: feishu` 与 `deliver_extra.chat_id` 把 agent response 发到飞书群。Source: `specs/change/20260507-rill-mvp/spec.md:86,100-102,123-124`
+
+### Available Approaches
+
+- **静态 Hermes config route**：在 Hermes config 中配置一个或两个 route，监听 `issues` 与 `pull_request`，prompt 输出结构化分析，`deliver: feishu` + `deliver_extra.chat_id` 投递飞书群。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:8-19,493-549,728-771`
+- **动态 `hermes webhook subscribe` route**：用 CLI 写入订阅 route，适合由 agent 或运维脚本创建/更新 route；字段覆盖 events、secret、prompt、skills、deliver。Source: `/Users/william/projects/hermes-agent/hermes_cli/webhook.py:137-157`
+- **单 route 监听两类 GitHub 事件**：一个 route 的 `events` 配置为 `issues` 与 `pull_request`，prompt 根据 payload 中 `issue` 或 `pull_request` 字段生成统一结构化消息。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-379,590-628`
+- **双 route 分别处理 issue 与 PR**：issue route 只监听 `issues`，PR route 只监听 `pull_request`，prompt 分别引用 `{issue.*}` 与 `{pull_request.*}` 字段，降低模板分支复杂度。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:49-77`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:590-628`
+- **Agent 模式投递 Feishu**：webhook route 触发 agent reasoning，agent response 通过 webhook adapter 的 cross-platform delivery 发送到 Feishu，匹配 MVP 的“分析消息”要求。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:493-549,728-771`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
+- **`deliver_only` 直接通知**：route 跳过 agent，把渲染 prompt 直接发到 Feishu，适合健康检查或纯通知。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:435-479`
+
+### Constraints & Dependencies
+
+- MVP 依赖外部 Hermes agent 仓库已有 webhook、Gateway、Feishu adapter；Rill 仓库当前没有本地实现代码可直接修改。Source: `.` directory entries; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:21-27`
+- Webhook secret 为 route startup 校验项；缺失会抛出清晰 `ValueError`，测试模式显式使用 `INSECURE_NO_AUTH`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:119-127`
+- Feishu 目标可通过 `deliver_extra.chat_id` 指定；缺少 chat_id 且 Hermes config 没有 Feishu home channel 时 delivery 返回 `No chat_id or home channel for feishu`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:752-763`
+- Feishu adapter 未连接时发送返回 `Not connected`；webhook cross-platform delivery 找不到 adapter 时返回 `Platform feishu not connected`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1704-1707`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:745-750`
+- opened-only 范围需要显式处理 GitHub payload `action`；Hermes route 的 `events` 过滤粒度是 GitHub event type。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-373`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:58-71`
+- PR 初版基于 webhook payload 可覆盖标题、作者、描述、URL；diff 级分析需要后续启用 GitHub CLI/API 权限。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:55-91`
+- GitHub webhook 需要公开可访问的 Hermes webhook URL，GitHub secret 与 route secret 保持一致。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:117-124`
+- Webhook POST 会异步触发 agent 并立即返回 202；端到端验证需要同时观察 HTTP accepted、Gateway agent run、Feishu 群消息。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:536-549`
+
+### Key References
+
+- `specs/change/20260508-hermes-github-feishu-mvp/spec.md:8-35` - 当前 MVP 目标、范围与成功标准。
+- `specs/change/20260507-rill-mvp/spec.md:86,100-102,123-124` - 上一版 research 对 Hermes 原生快速路径的结论。
+- `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:1-27,119-228,300-379,493-549,590-628,728-771` - Webhook adapter 配置、安全、事件过滤、prompt rendering、agent dispatch、Feishu cross-platform delivery。
+- `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752` - Feishu outbound send 行为与错误返回。
+- `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-91,117-124` - GitHub webhook route 配置、PR payload 限制、GitHub 设置步骤。
+- `/Users/william/projects/hermes-agent/hermes_cli/webhook.py:137-157` - 动态 webhook subscribe route 字段。
+- `/Users/william/projects/hermes-agent/gateway/delivery.py:45-95,129-169` - Delivery target 格式与路由结果结构。
 
 ## Design
 
-<!-- Technical approach, architecture decisions, and test strategy. Each design decision should cite a fact source. -->
+### Architecture Overview
+
+```mermaid
+sequenceDiagram
+    participant GitHub
+    participant Webhook as Hermes Webhook Adapter
+    participant Gateway as Hermes Gateway Agent
+    participant Feishu as Feishu Adapter
+    participant Group as Feishu Group
+
+    GitHub->>Webhook: POST /webhooks/github-issue-analysis or /webhooks/github-pr-analysis
+    Webhook->>Webhook: verify HMAC, rate limit, event filter, idempotency
+    Webhook->>Gateway: MessageEvent(prompt from GitHub payload)
+    Webhook-->>GitHub: 202 accepted
+    Gateway->>Gateway: produce structured issue/PR analysis
+    Gateway->>Webhook: final agent response
+    Webhook->>Feishu: deliver=feishu + deliver_extra.chat_id
+    Feishu->>Group: post formatted message
+```
+
+### Change Scope
+
+- Area: Rill spec only. Impact: 本仓库当前没有实现代码、测试或运行配置，设计产物记录 Hermes 外部配置与验证步骤。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:40,72`
+- Area: Hermes webhook route config. Impact: 新增两个 route，分别接收 GitHub `issues` 与 `pull_request` 事件，配置 HMAC secret、prompt、`deliver: feishu` 和 `deliver_extra.chat_id`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:8-19`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:49-77`
+- Area: GitHub repository webhook. Impact: Payload URL 指向 Hermes `/webhooks/<route>`，content type 使用 JSON，secret 与 route secret 一致，事件选择 Pull requests 与 Issues。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:117-124`; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:23-26`
+- Area: Hermes Gateway and Feishu adapter. Impact: webhook adapter 异步触发 agent 并通过 cross-platform delivery 发送到 Feishu 群。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:493-549,728-771`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
+- Area: Rollout. Impact: 先在一个目标 repo 和一个飞书群完成端到端验证，再扩展到更多 repo 或 diff 级 PR 分析。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:18,23-27`
+
+### Design Decisions
+
+- Decision: 使用 Hermes 原生 `webhook route → agent → Feishu delivery` 路径作为 MVP 主架构。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:14-18`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:1-19,493-549,728-771`
+- Decision: 使用两个静态 route：`github-issue-analysis` 与 `github-pr-analysis`。这样 prompt 可直接引用 `{issue.*}` 或 `{pull_request.*}`，模板保持清晰。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:8-19,590-628`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:49-77`
+- Decision: route `events` 分别配置为 `issues` 与 `pull_request`，opened-only 由 prompt 明确要求 agent 只处理 `action == opened`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-379`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:58-71`; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:23-26`
+- Decision: 使用 agent 模式生成分析消息，保持 `deliver_only` 关闭。MVP 成功标准需要摘要、风险判断和建议动作。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:16-17,31-34`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:435-479,493-549`
+- Decision: Feishu 投递使用 `deliver: feishu` 与 `deliver_extra.chat_id`，避免依赖 home channel。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:728-763`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
+- Decision: GitHub secret、Feishu chat_id、Feishu adapter 连接作为必需配置暴露；缺失时保留 Hermes 现有失败信号。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:119-127,745-763`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1704-1707`; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:34`
+- Decision: PR 初版只基于 webhook payload 元数据，diff 级分析进入后续增强。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:25-26`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:55-91`
+
+### Why this design
+
+- 最短路径复用 Hermes 已有 webhook、agent dispatch、cross-platform delivery 与 Feishu adapter，MVP 只需配置和验证。
+- 双 route 让 issue 与 PR prompt 独立演进，降低 webhook payload 字段差异带来的模板复杂度。
+- agent 模式满足“分析”目标；Feishu delivery 让最终消息落到团队协作群。
+- 失败信号沿用现有 Hermes adapter 行为，符合缺失配置时清晰暴露的成功标准。
+
+### Test Strategy
+
+- Config validation: 启动 Hermes Gateway，验证 webhook route secret 缺失时启动失败并显示 route 名称。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:119-127`
+- Webhook health: 启动后请求 `/health`，确认 webhook adapter 可用。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:142-145`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:96-113`
+- Auth validation: 使用错误 GitHub HMAC 调用 route，期待 401 `Invalid signature`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:319-328,555-584`
+- Event routing: 向 issue route 发送 `X-GitHub-Event: issues`，向 PR route 发送 `X-GitHub-Event: pull_request`，期待 202 accepted；发送无关 event 期待 ignored。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-373,536-549`
+- End-to-end: 在目标 repo 新建 issue 与 PR，观察 GitHub delivery accepted、Hermes agent run 日志、飞书群消息。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:29-34`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:536-549`
+- Failure visibility: Feishu adapter 未连接或 chat_id 缺失时，确认 delivery 返回 `Platform feishu not connected`、`Not connected` 或 `No chat_id or home channel for feishu`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:745-763`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1704-1707`
+
+### Pseudocode
+
+Hermes config sketch:
+
+```yaml
+platforms:
+  webhook:
+    enabled: true
+    extra:
+      port: 8644
+      rate_limit: 30
+      routes:
+        github-issue-analysis:
+          secret: ${GITHUB_WEBHOOK_SECRET}
+          events: [issues]
+          prompt: |
+            GitHub issue webhook received. action={action}
+            Only analyze when action is "opened".
+
+            Repo: {repository.full_name}
+            Issue: #{issue.number} {issue.title}
+            Author: {issue.user.login}
+            URL: {issue.html_url}
+            Body: {issue.body}
+
+            Send a concise Chinese analysis with: repo, number, title, author, link,
+            summary, impact/risk, suggested owner/action, and priority.
+          deliver: feishu
+          deliver_extra:
+            chat_id: ${FEISHU_CHAT_ID}
+
+        github-pr-analysis:
+          secret: ${GITHUB_WEBHOOK_SECRET}
+          events: [pull_request]
+          prompt: |
+            GitHub pull request webhook received. action={action}
+            Only analyze when action is "opened".
+
+            Repo: {repository.full_name}
+            PR: #{pull_request.number} {pull_request.title}
+            Author: {pull_request.user.login}
+            Branch: {pull_request.head.ref} -> {pull_request.base.ref}
+            URL: {pull_request.html_url}
+            Body: {pull_request.body}
+
+            Send a concise Chinese analysis with: repo, number, title, author, link,
+            summary, review focus, potential risk, suggested reviewer/action, and priority.
+          deliver: feishu
+          deliver_extra:
+            chat_id: ${FEISHU_CHAT_ID}
+```
+
+Flow:
+
+1. Operator configures Hermes webhook platform, Feishu credentials, target `FEISHU_CHAT_ID`, and `GITHUB_WEBHOOK_SECRET`.
+2. Operator registers two GitHub webhooks or one GitHub webhook with both events pointing to each route URL as needed.
+3. GitHub sends event with `X-GitHub-Event` and HMAC signature.
+4. Hermes validates body size, signature, rate limit, event filter, and idempotency.
+5. Hermes renders route prompt from payload fields and creates one webhook-scoped `MessageEvent`.
+6. Agent generates a structured Chinese issue/PR analysis.
+7. Webhook adapter sends final response through Feishu adapter to `FEISHU_CHAT_ID`.
+8. Operator verifies accepted HTTP response, Hermes logs, and Feishu group output.
+
+### File Structure
+
+- `specs/change/20260508-hermes-github-feishu-mvp/spec.md` - MVP design, plan, verification notes。
+- `/Users/william/projects/hermes-agent` - Hermes external runtime/config target for implementation and validation。
+- `~/.hermes/config.yaml` - expected local Hermes Gateway configuration location from Hermes guide。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-51`
+
+### Interfaces / APIs
+
+- HTTP: `POST /webhooks/github-issue-analysis` receives GitHub issue events。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:142-145`
+- HTTP: `POST /webhooks/github-pr-analysis` receives GitHub PR events。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:142-145`
+- HTTP: `GET /health` verifies webhook adapter health。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:142-145`
+- GitHub headers: `X-GitHub-Event`, `X-GitHub-Delivery`, `X-Hub-Signature-256` drive event routing, idempotency, and HMAC auth。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-364,410-414,555-565`
+- Prompt template: `{field}` and `{nested.field}` read GitHub payload fields。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:590-628`
+- Delivery: `deliver: feishu` with `deliver_extra.chat_id` routes final response to Feishu。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:205-223,728-771`
+
+### Edge Cases
+
+- GitHub sends `issues` or `pull_request` actions such as edited, closed, reopened: prompt instructs agent to stop after identifying non-opened action。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-379`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:58-71`
+- Duplicate GitHub deliveries: webhook adapter uses delivery ID idempotency cache and returns duplicate status。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:416-433`
+- Payload too large: webhook adapter returns 413 before full processing。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:304-310`
+- Invalid or missing signature: webhook adapter returns 401 with invalid signature。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:319-328,555-584`
+- Feishu post formatting rejected: Feishu adapter falls back to plain text, preserving delivery attempt visibility through `SendResult`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1712-1752`
+- Missing Feishu chat target: cross-platform delivery returns a structured error。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:752-763`
 
 ## Plan
 
-<!-- Optional: Step breakdown for complex features that need multiple implementation steps.
-     Decided during Design. Checked off during Implement.
-     Keep this section compact and step-based.
-     Use markdown checkboxes for all step and substep items, for example:
-     - [ ] Step 1: Foo
-       - [ ] Substep 1.1 Implement: Foo foundation
-       - [ ] Substep 1.2 Implement: Foo integration
-       - [ ] Substep 1.3 Implement: Foo edge handling
-       - [ ] Substep 1.4 Verify: Foo automated coverage
-       - [ ] Substep 1.5 Verify: Foo manual workflow
-     - [ ] Step 2: Bar
-       - [ ] Substep 2.1 Implement: Bar
-       - [ ] Substep 2.2 Verify: Bar
-     - [ ] Step 3: Baz
-       - [ ] Substep 3.1 Implement: Baz
-       - [ ] Substep 3.2 Verify: Baz
-     Use a capability-based step breakdown with reviewable, meaningful increments.
-     Good boundaries align with one user-visible workflow, one subsystem/integration boundary, one migration/rollout step, or one stabilization milestone.
-     Each step must include small, independent substeps for implementation and immediate testing/verification.
-     Within each step, list implementation substeps before verification substeps.
-     The final step may focus on overall testing/verification, edge cases, regression coverage, and coverage improvements.
-     A step is complete only when relevant tests pass.
-     Size steps so one coding agent can implement + validate in a single session.
-     Write each substep as one small, independent task. -->
+- [ ] Step 1: 配置 Hermes webhook 与 Feishu delivery
+  - [ ] Substep 1.1 Implement: 在 Hermes 本地配置中启用 webhook platform、端口、rate limit。
+  - [ ] Substep 1.2 Implement: 添加 `github-issue-analysis` route，配置 secret、`events: [issues]`、issue prompt、`deliver: feishu`、`deliver_extra.chat_id`。
+  - [ ] Substep 1.3 Implement: 添加 `github-pr-analysis` route，配置 secret、`events: [pull_request]`、PR prompt、`deliver: feishu`、`deliver_extra.chat_id`。
+  - [ ] Substep 1.4 Verify: 启动 Hermes Gateway 并确认 `/health` 返回 ok。
+  - [ ] Substep 1.5 Verify: 临时移除 secret 或 chat_id 验证缺失配置暴露清晰失败信息，然后恢复配置。
+- [ ] Step 2: 注册 GitHub webhook 并验证接入层
+  - [ ] Substep 2.1 Implement: 在目标 GitHub repo 配置 issue route webhook，Payload URL 指向 `/webhooks/github-issue-analysis`。
+  - [ ] Substep 2.2 Implement: 在目标 GitHub repo 配置 PR route webhook，Payload URL 指向 `/webhooks/github-pr-analysis`。
+  - [ ] Substep 2.3 Verify: 使用 GitHub delivery 或签名 curl 验证 issue route 返回 202 accepted。
+  - [ ] Substep 2.4 Verify: 使用 GitHub delivery 或签名 curl 验证 PR route 返回 202 accepted。
+  - [ ] Substep 2.5 Verify: 发送无关 event，确认 route 返回 ignored。
+- [ ] Step 3: 完成端到端 Feishu 消息验证
+  - [ ] Substep 3.1 Implement: 新建测试 issue，确认 agent 生成中文结构化分析。
+  - [ ] Substep 3.2 Implement: 新建测试 PR，确认 agent 生成中文结构化分析。
+  - [ ] Substep 3.3 Verify: 飞书群消息包含 repo、编号、标题、作者、链接、摘要、建议处理动作。
+  - [ ] Substep 3.4 Verify: 检查 Hermes 日志，记录 delivery ID、agent run、Feishu SendResult。
+  - [ ] Substep 3.5 Verify: 在 spec Notes 中记录配置位置、验证步骤和结果。
 
 ## Notes
 
