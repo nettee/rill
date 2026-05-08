@@ -78,3 +78,9 @@
 - 6.4 人工确认 retry 消息已正常进入目标飞书群 `[H] Rill 测试`，内容为完整 issue 分析文本，包含 repo、编号、标题、作者、链接、摘要、影响/风险、建议动作等信息。
 
 偏差/坑：Step 6 发现了目标群只收到 agent 确认语、完整分析进入 home channel 的路由问题；根因是 prompt 让 agent 主动发送 Feishu，与 webhook delivery 重叠。修复后使用 retry issue 代替 GitHub redelivery，因为 redelivery API 需要额外 token scope。
+
+## Step 7: Agent 自动触发 PR webhook 验证
+
+状态：进行中。
+
+- 7.1 已基于当前本地 `main` 创建测试分支 `hermes-mvp-test-20260508`。本节记录变更同时作为无害文档/spec 变更，用于打开测试 PR。
