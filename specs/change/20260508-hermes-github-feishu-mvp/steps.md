@@ -117,6 +117,7 @@
 - 9.1 已更新 spec Notes，记录 repo、webhook IDs、测试 issue/PR URL、delivery IDs、人工 Feishu 确认结果、Hermes 配置需求与 Hermes 源码补丁。
 - 9.1 Hermes 需要的本地配置主要在 `/Users/william/.hermes/config.yaml`：`platforms.webhook.enabled=true`、`platforms.webhook.extra.port=8644`、`rate_limit=30`、两个 routes、route secrets、`actions: [opened]`、prompts、`deliver=feishu`、`deliver_extra.chat_id=oc_3218e07b3504dd0635bbd10fd4872cab`、`platforms.feishu.enabled=true`。Feishu app 凭据沿用用户本机既有 Hermes 配置/登录状态。
 - 9.1 Hermes 源码也有变更：`/Users/william/projects/hermes-agent/gateway/platforms/webhook.py` 增加 route-level `actions` 过滤，`/Users/william/projects/hermes-agent/tests/gateway/test_webhook_adapter.py` 增加 action filter 测试；Hermes 提交 `a4349304c step: add webhook action filtering`。运行时副本 `/Users/william/.hermes/hermes-agent/gateway/platforms/webhook.py` 同步应用了该补丁。
+- 9.1 已通过 fork 向上游 Hermes 创建 PR：`https://github.com/NousResearch/hermes-agent/pull/21744`，标题 `fix(webhook): filter route actions before agent dispatch`，分支 `nettee:fix-webhook-action-filter`，提交 `a790501b fix(webhook): filter route actions before agent dispatch`。PR 全程使用英文并按 upstream PR template 填写；包含源码、测试和文档三类变更，目标测试 `/Users/william/.hermes/hermes-agent/venv/bin/python -m pytest tests/gateway/test_webhook_adapter.py -q` 结果 `56 passed`。
 - 9.2 已关闭测试 issue #1：`https://github.com/nettee/rill/issues/1`，并添加清理评论。
 - 9.2 已关闭 retry issue #2：`https://github.com/nettee/rill/issues/2`，并添加清理评论。
 - 9.3 已关闭测试 PR #3：`https://github.com/nettee/rill/pull/3`，并添加清理评论。

@@ -313,6 +313,13 @@ Flow:
   - `/Users/william/projects/hermes-agent/tests/gateway/test_webhook_adapter.py`
   - Hermes commit: `a4349304c step: add webhook action filtering`
   - Runtime copy patched: `/Users/william/.hermes/hermes-agent/gateway/platforms/webhook.py`
+- Upstream Hermes PR created from fork:
+  - PR: `https://github.com/NousResearch/hermes-agent/pull/21744`
+  - Title: `fix(webhook): filter route actions before agent dispatch`
+  - Fork branch: `nettee:fix-webhook-action-filter`
+  - Fork commit: `a790501b fix(webhook): filter route actions before agent dispatch`
+  - Changed files: `gateway/platforms/webhook.py`, `tests/gateway/test_webhook_adapter.py`, `website/docs/guides/webhook-github-pr-review.md`
+  - PR body follows the upstream template in English; full-suite checkbox left unchecked because only targeted webhook adapter tests were run.
 - Prompt correction: issue/PR prompts now instruct the agent to return analysis text only and let webhook delivery send to Feishu. This prevents the agent from using the Feishu tool and sending full content to the home channel.
 - Deviation: `pull_request/synchronize` originally produced an extra Feishu no-op message. Added route `actions: [opened]` support so non-opened actions are ignored before agent dispatch.
 
