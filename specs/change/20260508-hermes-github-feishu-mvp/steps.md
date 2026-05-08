@@ -109,3 +109,19 @@
 - 8.4 人工确认 PR 飞书消息主体正常；额外 `synchronize` 消息的根因已修复，后续非 opened action 将在 webhook 层忽略。
 
 偏差/坑：为满足 MVP “只覆盖 opened” 标准，本步骤从纯配置调整为 Hermes webhook adapter 小幅增强；GitHub repository webhook 无法按 `action` 过滤，只能按 `pull_request` 事件类型过滤。
+
+## Step 9: Agent 自动整理验证记录与清理 GitHub 测试资源
+
+状态：完成。
+
+- 9.1 已更新 spec Notes，记录 repo、webhook IDs、测试 issue/PR URL、delivery IDs、人工 Feishu 确认结果、Hermes 配置需求与 Hermes 源码补丁。
+- 9.1 Hermes 需要的本地配置主要在 `/Users/william/.hermes/config.yaml`：`platforms.webhook.enabled=true`、`platforms.webhook.extra.port=8644`、`rate_limit=30`、两个 routes、route secrets、`actions: [opened]`、prompts、`deliver=feishu`、`deliver_extra.chat_id=oc_3218e07b3504dd0635bbd10fd4872cab`、`platforms.feishu.enabled=true`。Feishu app 凭据沿用用户本机既有 Hermes 配置/登录状态。
+- 9.1 Hermes 源码也有变更：`/Users/william/projects/hermes-agent/gateway/platforms/webhook.py` 增加 route-level `actions` 过滤，`/Users/william/projects/hermes-agent/tests/gateway/test_webhook_adapter.py` 增加 action filter 测试；Hermes 提交 `a4349304c step: add webhook action filtering`。运行时副本 `/Users/william/.hermes/hermes-agent/gateway/platforms/webhook.py` 同步应用了该补丁。
+- 9.2 已关闭测试 issue #1：`https://github.com/nettee/rill/issues/1`，并添加清理评论。
+- 9.2 已关闭 retry issue #2：`https://github.com/nettee/rill/issues/2`，并添加清理评论。
+- 9.3 已关闭测试 PR #3：`https://github.com/nettee/rill/pull/3`，并添加清理评论。
+- 9.3 已删除远端测试分支 `origin/hermes-mvp-test-20260508`。
+- 9.4 验证：issue #1、issue #2、PR #3 状态均为 `CLOSED`。
+- 9.5 验证：GitHub webhooks 保留 active：issue hook `619555132`，PR hook `619555148`；两个 hook last_response 均为 active/200 OK。
+
+偏差/坑：Step 9 记录提交在本地测试分支上完成；远端测试分支已按清理计划删除，因此本地记录提交用于审计，最终需要按项目需要决定是否 cherry-pick/merge 到 `main`。

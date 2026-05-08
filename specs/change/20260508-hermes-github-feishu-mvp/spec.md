@@ -296,8 +296,51 @@ Flow:
 
 ### Implementation
 
-<!-- Files created/modified, decisions made during coding, deviations from design -->
+- Rill execution log: `specs/change/20260508-hermes-github-feishu-mvp/steps.md` records Steps 1-9, deviations, delivery IDs, manual confirmations, and cleanup.
+- GitHub repo: `nettee/rill`, default branch `main`.
+- GitHub webhooks retained active:
+  - Issue hook `619555132`: `https://drinking-anne-proposition-quiz.trycloudflare.com/webhooks/github-issue-analysis`, event `issues`, content type `json`.
+  - PR hook `619555148`: `https://drinking-anne-proposition-quiz.trycloudflare.com/webhooks/github-pr-analysis`, event `pull_request`, content type `json`.
+- Hermes local config changed in `/Users/william/.hermes/config.yaml`:
+  - `platforms.webhook.enabled=true`
+  - `platforms.webhook.extra.port=8644`
+  - `platforms.webhook.extra.rate_limit=30`
+  - route `github-issue-analysis`: secret, `events: [issues]`, `actions: [opened]`, issue prompt, `deliver: feishu`, `deliver_extra.chat_id: oc_3218e07b3504dd0635bbd10fd4872cab`
+  - route `github-pr-analysis`: same secret, `events: [pull_request]`, `actions: [opened]`, PR prompt, `deliver: feishu`, same `chat_id`
+  - `platforms.feishu.enabled=true`; Feishu credentials/connection came from the existing local Hermes setup.
+- Hermes source changed to support action-level filtering:
+  - `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py`
+  - `/Users/william/projects/hermes-agent/tests/gateway/test_webhook_adapter.py`
+  - Hermes commit: `a4349304c step: add webhook action filtering`
+  - Runtime copy patched: `/Users/william/.hermes/hermes-agent/gateway/platforms/webhook.py`
+- Prompt correction: issue/PR prompts now instruct the agent to return analysis text only and let webhook delivery send to Feishu. This prevents the agent from using the Feishu tool and sending full content to the home channel.
+- Deviation: `pull_request/synchronize` originally produced an extra Feishu no-op message. Added route `actions: [opened]` support so non-opened actions are ignored before agent dispatch.
 
 ### Verification
 
-<!-- How the feature was verified: tests written, manual testing steps, results -->
+- Hermes health: `curl -i http://localhost:8644/health` returned `HTTP/1.1 200 OK` and `{"status":"ok","platform":"webhook"}`.
+- Hermes gateway log confirmed: `[webhook] Listening on 0.0.0.0:8644 — routes: github-issue-analysis, github-pr-analysis`.
+- GitHub webhook ping deliveries returned 200 OK for both hooks.
+- Issue opened delivery:
+  - Test issue #1: `https://github.com/nettee/rill/issues/1`
+  - Delivery id `3818703523336421400`, `issues/opened`, HTTP `202`
+  - Initial Feishu result exposed the prompt/tool routing issue.
+- Issue retry after prompt fix:
+  - Retry issue #2: `https://github.com/nettee/rill/issues/2`
+  - Delivery id `3818704905724494000`, `issues/opened`, HTTP `202`
+  - Manual Feishu confirmation: target group `[H] Rill 测试` received full issue analysis.
+- PR opened delivery:
+  - Test PR #3: `https://github.com/nettee/rill/pull/3`
+  - Delivery id `3818706595582312400`, `pull_request/opened`, HTTP `202`
+  - Manual Feishu confirmation: target group received full PR analysis.
+- Action filter verification:
+  - Test command: `/Users/william/.hermes/hermes-agent/venv/bin/python -m pytest tests/gateway/test_webhook_adapter.py -q`
+  - Result: `38 passed`
+  - Local signed `pull_request/synchronize` smoke request returned `HTTP/1.1 200 OK` with `{"status":"ignored","event":"pull_request","action":"synchronize"}`.
+  - Post-fix GitHub `pull_request/synchronize` delivery id `3818708026712391700` returned status_code `200`, confirming ignore-before-agent behavior.
+- Cleanup:
+  - Issue #1 closed.
+  - Issue #2 closed.
+  - PR #3 closed.
+  - Remote branch `origin/hermes-mvp-test-20260508` deleted.
+  - Webhooks `619555132` and `619555148` remain active.
