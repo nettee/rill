@@ -36,3 +36,16 @@
 - 3.7 Hermes 日志确认 route 已加载：`[webhook] Listening on 0.0.0.0:8644 — routes: github-issue-analysis, github-pr-analysis`。公开 webhook base URL：`https://drinking-anne-proposition-quiz.trycloudflare.com`。
 
 偏差/坑：用户要求 agent 直接修改 Hermes config，原计划中 Step 3 的配置写入从人工操作调整为 agent 操作。第一次 Ruby 写入脚本因 prompt 中 `#{issue.number}` 被 Ruby 字符串插值解析而失败，发生在写文件前；改用 `%q{}` 原样字符串后写入成功。验证摘要显示两个 route 均有 secret、chat_id、正确 event 和 Feishu delivery。
+
+## Step 4: Agent 自动配置当前仓库 GitHub webhooks
+
+状态：完成。
+
+- 4.1 已创建 issue route webhook，hook id `619555132`，Payload URL：`https://drinking-anne-proposition-quiz.trycloudflare.com/webhooks/github-issue-analysis`。
+- 4.2 issue webhook：content type 为 `json`，secret 使用 Hermes route 中同一个 secret，事件为 `issues`，active=true。
+- 4.3 已创建 PR route webhook，hook id `619555148`，Payload URL：`https://drinking-anne-proposition-quiz.trycloudflare.com/webhooks/github-pr-analysis`。
+- 4.4 PR webhook：content type 为 `json`，secret 使用 Hermes route 中同一个 secret，事件为 `pull_request`，active=true。
+- 4.5 GitHub hook 列表验证通过：两个 webhook URL、content type、event、active 状态均正确；GitHub last_response 均为 active/200 OK。
+- 4.6 GitHub 自动 ping delivery 验证通过：issue hook delivery id `3818703399015153700`，event=`ping`，status=`OK`，status_code=200；PR hook delivery id `3818703403299635000`，event=`ping`，status=`OK`，status_code=200。
+
+偏差/坑：第一次创建脚本缺少 Ruby `shellwords` 依赖，命令在调用 GitHub API 前失败，未创建 webhook；补充 `require "shellwords"` 后创建成功。
