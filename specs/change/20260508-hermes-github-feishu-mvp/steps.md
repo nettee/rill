@@ -61,3 +61,19 @@
 - 5.4 已在测试 issue 添加验证评论：`https://github.com/nettee/rill/issues/1#issuecomment-4404123453`。
 
 偏差/坑：`gh issue create --json` 在当前 GitHub CLI 版本中不可用，改为创建后用 `gh issue view --json` 读取 issue 元数据。
+
+## Step 6: 人工确认 issue 飞书消息
+
+状态：完成初次确认，并完成 prompt 修复与 retry 验证；等待人工确认 retry 消息是否已按预期进入目标飞书群。
+
+- 6.1 人工确认目标飞书群 `oc_3218e07b3504dd0635bbd10fd4872cab` 收到初次 issue 通知，但内容只有 `已发送到 Feishu 群。`。
+- 6.2 人工确认完整 GitHub Issue 分析消息进入了此前配置的 Hermes home channel。完整消息包含 repo、编号、标题、作者、链接、摘要、影响/风险、建议动作、优先级。
+- 6.3 原因分析：route prompt 使用了 `Send a concise Chinese analysis...`，agent 将其理解为主动调用 Feishu 发送工具；该工具默认投递到 Hermes home channel。webhook route 的 `deliver=feishu` 随后把 agent 最终回复 `已发送到 Feishu 群。` 投递到了目标群，导致目标群只收到摘要/确认语。
+- 6.3 修复：已修改 `/Users/william/.hermes/config.yaml` 中 `github-issue-analysis` 与 `github-pr-analysis` prompts，明确要求 `Return only the Chinese analysis text as your final answer. The webhook delivery layer will send your final answer to Feishu.`。
+- 6.3 已执行 `hermes gateway restart`，`/health` 返回 200 OK；日志确认 `[webhook] Listening on 0.0.0.0:8644 — routes: github-issue-analysis, github-pr-analysis`。
+- 6.3 Retry 验证：GitHub redelivery API 返回 404，提示当前 token 需要 `admin:repo_hook` scope；改为创建 retry issue `https://github.com/nettee/rill/issues/2`，标题 `[Hermes MVP Test] issue opened retry`。
+- 6.3 Retry delivery：hook id `619555132`，delivery id `3818704905724494000`，event/action=`issues/opened`，status=`OK`，status_code=`202`，delivered_at=`2026-05-08T06:50:42.255Z`。
+- 6.3 Hermes retry 日志：`[webhook] POST event=issues route=github-issue-analysis prompt_len=585 delivery=3a55218a-4aaa-11f1-85d5-0511f8845a90`；agent response ready，response=`651 chars`，随后 webhook delivery 发送该 651 字符响应。
+- 6.4 已在 retry issue 添加验证评论：`https://github.com/nettee/rill/issues/2#issuecomment-4404201849`。
+
+偏差/坑：Step 6 发现了目标群只收到 agent 确认语、完整分析进入 home channel 的路由问题；根因是 prompt 让 agent 主动发送 Feishu，与 webhook delivery 重叠。修复后使用 retry issue 代替 GitHub redelivery，因为 redelivery API 需要额外 token scope。
