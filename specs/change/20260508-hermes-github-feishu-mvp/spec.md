@@ -114,9 +114,10 @@ sequenceDiagram
 
 - Area: Rill spec only. Impact: 本仓库当前没有实现代码、测试或运行配置，设计产物记录 Hermes 外部配置与验证步骤。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:40,72`
 - Area: Hermes webhook route config. Impact: 新增两个 route，分别接收 GitHub `issues` 与 `pull_request` 事件，配置 HMAC secret、prompt、`deliver: feishu` 和 `deliver_extra.chat_id`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:8-19`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:49-77`
-- Area: GitHub repository webhook. Impact: Payload URL 指向 Hermes `/webhooks/<route>`，content type 使用 JSON，secret 与 route secret 一致，事件选择 Pull requests 与 Issues。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:117-124`; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:23-26`
+- Area: GitHub repository webhook. Impact: 使用当前仓库作为 GitHub issue 与 PR 来源；Payload URL 指向 Hermes `/webhooks/<route>`，content type 使用 JSON，secret 与 route secret 一致，事件选择 Pull requests 与 Issues。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:117-124`; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:23-26`
 - Area: Hermes Gateway and Feishu adapter. Impact: webhook adapter 异步触发 agent 并通过 cross-platform delivery 发送到 Feishu 群。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:493-549,728-771`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
-- Area: Rollout. Impact: 先在一个目标 repo 和一个飞书群完成端到端验证，再扩展到更多 repo 或 diff 级 PR 分析。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:18,23-27`
+- Area: Rollout. Impact: 先在当前仓库和一个飞书群完成端到端验证，再扩展到更多 repo 或 diff 级 PR 分析。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:18,23-27`
+- Area: Execution ownership. Impact: GitHub 侧操作由 agent 自动完成；Hermes 配置只允许 agent 做只读检查，配置写入、启动、凭据填充和服务操作由人工完成。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-51,96-124`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:119-127`
 
 ### Design Decisions
 
@@ -127,6 +128,7 @@ sequenceDiagram
 - Decision: Feishu 投递使用 `deliver: feishu` 与 `deliver_extra.chat_id`，避免依赖 home channel。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:728-763`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1697-1752`
 - Decision: GitHub secret、Feishu chat_id、Feishu adapter 连接作为必需配置暴露；缺失时保留 Hermes 现有失败信号。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:119-127,745-763`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1704-1707`; `specs/change/20260508-hermes-github-feishu-mvp/spec.md:34`
 - Decision: PR 初版只基于 webhook payload 元数据，diff 级分析进入后续增强。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:25-26`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:55-91`
+- Decision: 当前仓库作为 MVP 验证 repo，agent 负责 GitHub issue、PR、webhook 配置和 delivery 检查；Hermes runtime 与本地配置由人工修改。Source: `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:37-51,117-124`
 
 ### Why this design
 
@@ -141,7 +143,7 @@ sequenceDiagram
 - Webhook health: 启动后请求 `/health`，确认 webhook adapter 可用。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:142-145`; `/Users/william/projects/hermes-agent/website/docs/guides/webhook-github-pr-review.md:96-113`
 - Auth validation: 使用错误 GitHub HMAC 调用 route，期待 401 `Invalid signature`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:319-328,555-584`
 - Event routing: 向 issue route 发送 `X-GitHub-Event: issues`，向 PR route 发送 `X-GitHub-Event: pull_request`，期待 202 accepted；发送无关 event 期待 ignored。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:356-373,536-549`
-- End-to-end: 在目标 repo 新建 issue 与 PR，观察 GitHub delivery accepted、Hermes agent run 日志、飞书群消息。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:29-34`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:536-549`
+- End-to-end: 在当前 repo 新建 issue 与 PR，观察 GitHub delivery accepted、Hermes agent run 日志、飞书群消息。Source: `specs/change/20260508-hermes-github-feishu-mvp/spec.md:29-34`; `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:536-549`
 - Failure visibility: Feishu adapter 未连接或 chat_id 缺失时，确认 delivery 返回 `Platform feishu not connected`、`Not connected` 或 `No chat_id or home channel for feishu`。Source: `/Users/william/projects/hermes-agent/gateway/platforms/webhook.py:745-763`; `/Users/william/projects/hermes-agent/gateway/platforms/feishu.py:1704-1707`
 
 ### Pseudocode
@@ -199,7 +201,7 @@ platforms:
 Flow:
 
 1. Operator configures Hermes webhook platform, Feishu credentials, target `FEISHU_CHAT_ID`, and `GITHUB_WEBHOOK_SECRET`.
-2. Operator registers two GitHub webhooks or one GitHub webhook with both events pointing to each route URL as needed.
+2. Agent registers GitHub webhooks on the current repository after operator provides public base URL and webhook secret.
 3. GitHub sends event with `X-GitHub-Event` and HMAC signature.
 4. Hermes validates body size, signature, rate limit, event filter, and idempotency.
 5. Hermes renders route prompt from payload fields and creates one webhook-scoped `MessageEvent`.
@@ -233,24 +235,60 @@ Flow:
 
 ## Plan
 
-- [ ] Step 1: 配置 Hermes webhook 与 Feishu delivery
-  - [ ] Substep 1.1 Implement: 在 Hermes 本地配置中启用 webhook platform、端口、rate limit。
-  - [ ] Substep 1.2 Implement: 添加 `github-issue-analysis` route，配置 secret、`events: [issues]`、issue prompt、`deliver: feishu`、`deliver_extra.chat_id`。
-  - [ ] Substep 1.3 Implement: 添加 `github-pr-analysis` route，配置 secret、`events: [pull_request]`、PR prompt、`deliver: feishu`、`deliver_extra.chat_id`。
-  - [ ] Substep 1.4 Verify: 启动 Hermes Gateway 并确认 `/health` 返回 ok。
-  - [ ] Substep 1.5 Verify: 临时移除 secret 或 chat_id 验证缺失配置暴露清晰失败信息，然后恢复配置。
-- [ ] Step 2: 注册 GitHub webhook 并验证接入层
-  - [ ] Substep 2.1 Implement: 在目标 GitHub repo 配置 issue route webhook，Payload URL 指向 `/webhooks/github-issue-analysis`。
-  - [ ] Substep 2.2 Implement: 在目标 GitHub repo 配置 PR route webhook，Payload URL 指向 `/webhooks/github-pr-analysis`。
-  - [ ] Substep 2.3 Verify: 使用 GitHub delivery 或签名 curl 验证 issue route 返回 202 accepted。
-  - [ ] Substep 2.4 Verify: 使用 GitHub delivery 或签名 curl 验证 PR route 返回 202 accepted。
-  - [ ] Substep 2.5 Verify: 发送无关 event，确认 route 返回 ignored。
-- [ ] Step 3: 完成端到端 Feishu 消息验证
-  - [ ] Substep 3.1 Implement: 新建测试 issue，确认 agent 生成中文结构化分析。
-  - [ ] Substep 3.2 Implement: 新建测试 PR，确认 agent 生成中文结构化分析。
-  - [ ] Substep 3.3 Verify: 飞书群消息包含 repo、编号、标题、作者、链接、摘要、建议处理动作。
-  - [ ] Substep 3.4 Verify: 检查 Hermes 日志，记录 delivery ID、agent run、Feishu SendResult。
-  - [ ] Substep 3.5 Verify: 在 spec Notes 中记录配置位置、验证步骤和结果。
+- [ ] Step 1: Agent 只读盘点当前仓库与 GitHub 远端
+  - [ ] Substep 1.1 Verify: 读取当前 git remote，确认当前仓库对应的 GitHub `owner/repo`。
+  - [ ] Substep 1.2 Verify: 使用 GitHub CLI 读取 repo 信息，确认 agent 具备 issue、PR、webhook 相关 GitHub 操作权限。
+  - [ ] Substep 1.3 Verify: 检查当前工作区状态，记录可用于测试 PR 的安全变更策略。
+  - [ ] Substep 1.4 Verify: 检查当前仓库已有 open issues 与 open PR，避免测试标题冲突。
+  - [ ] Substep 1.5 Verify: 记录 repo、默认分支、测试分支命名、测试 issue 标题、测试 PR 标题到 Notes。
+- [ ] Step 2: Agent 只读检查 Hermes 本地状态
+  - [ ] Substep 2.1 Verify: 读取 Hermes config 路径是否存在，记录实际路径与可见配置键。
+  - [ ] Substep 2.2 Verify: 检查 webhook platform 是否已启用、端口、rate limit、routes 配置是否可见。
+  - [ ] Substep 2.3 Verify: 检查 Feishu platform 配置是否存在，记录 chat_id/home channel 是否可见。
+  - [ ] Substep 2.4 Verify: 检查 Hermes webhook health endpoint 是否已有本地服务响应。
+  - [ ] Substep 2.5 Verify: 输出人工配置所需的缺口清单，不修改 Hermes 配置、不启动或停止 Hermes 服务。
+- [ ] Step 3: 人工配置 Hermes webhook 与 Feishu delivery
+  - [ ] Substep 3.1 Implement: 在 Hermes 本地配置中启用 webhook platform，设置端口与 rate limit。
+  - [ ] Substep 3.2 Implement: 配置 `github-issue-analysis` route：secret、`events: [issues]`、issue prompt、`deliver: feishu`、`deliver_extra.chat_id`。
+  - [ ] Substep 3.3 Implement: 配置 `github-pr-analysis` route：secret、`events: [pull_request]`、PR prompt、`deliver: feishu`、`deliver_extra.chat_id`。
+  - [ ] Substep 3.4 Implement: 填入 Feishu 凭据、目标群 `chat_id`、GitHub webhook secret。
+  - [ ] Substep 3.5 Implement: 启动或重启本地 Hermes Gateway，使 webhook 与 Feishu adapter 生效。
+  - [ ] Substep 3.6 Verify: 人工访问 `/health`，确认 webhook adapter 返回 ok。
+  - [ ] Substep 3.7 Verify: 人工确认 Hermes 日志显示两个 route 已加载，并记录端口与公开 webhook base URL。
+- [ ] Step 4: Agent 自动配置当前仓库 GitHub webhooks
+  - [ ] Substep 4.1 Implement: 使用 GitHub CLI 或 GitHub API 在当前仓库创建 issue route webhook，Payload URL 为 `<public-base-url>/webhooks/github-issue-analysis`。
+  - [ ] Substep 4.2 Implement: 设置 issue webhook content type 为 JSON，secret 使用人工提供的同一 webhook secret，事件选择 Issues。
+  - [ ] Substep 4.3 Implement: 使用 GitHub CLI 或 GitHub API 在当前仓库创建 PR route webhook，Payload URL 为 `<public-base-url>/webhooks/github-pr-analysis`。
+  - [ ] Substep 4.4 Implement: 设置 PR webhook content type 为 JSON，secret 使用人工提供的同一 webhook secret，事件选择 Pull requests。
+  - [ ] Substep 4.5 Verify: 读取当前仓库 webhook 列表，确认两个 webhook active、URL、content type、event 配置正确。
+  - [ ] Substep 4.6 Verify: 触发 GitHub webhook ping 或查看 recent delivery，确认 GitHub 侧 delivery 能访问 Hermes 公开 URL。
+- [ ] Step 5: Agent 自动触发 issue webhook 验证
+  - [ ] Substep 5.1 Implement: 在当前仓库创建测试 issue，标题使用固定前缀 `[Hermes MVP Test] issue opened`。
+  - [ ] Substep 5.2 Verify: 读取 GitHub webhook recent deliveries，确认 issue route 收到 `issues` / `opened` delivery。
+  - [ ] Substep 5.3 Verify: 确认 delivery HTTP response 为 202 accepted，记录 delivery ID。
+  - [ ] Substep 5.4 Implement: 在测试 issue 添加评论，记录 GitHub delivery ID 与 HTTP response。
+- [ ] Step 6: 人工确认 issue 飞书消息
+  - [ ] Substep 6.1 Verify: 在飞书群查找 `[Hermes MVP Test] issue opened` 对应分析消息。
+  - [ ] Substep 6.2 Verify: 确认消息包含 repo、编号、标题、作者、链接、摘要、建议处理动作。
+  - [ ] Substep 6.3 Verify: 记录 issue 飞书消息时间、可见内容摘要、异常现象。
+  - [ ] Substep 6.4 Verify: 把确认结果反馈给 agent，用于写入 spec Notes 与 issue 评论。
+- [ ] Step 7: Agent 自动触发 PR webhook 验证
+  - [ ] Substep 7.1 Implement: 基于当前仓库创建测试分支，提交一个无害文档或 spec Notes 更新。
+  - [ ] Substep 7.2 Implement: 打开测试 PR，标题使用固定前缀 `[Hermes MVP Test] PR opened`。
+  - [ ] Substep 7.3 Verify: 读取 GitHub webhook recent deliveries，确认 PR route 收到 `pull_request` / `opened` delivery。
+  - [ ] Substep 7.4 Verify: 确认 delivery HTTP response 为 202 accepted，记录 delivery ID。
+  - [ ] Substep 7.5 Implement: 在测试 PR 添加评论，记录 GitHub delivery ID 与 HTTP response。
+- [ ] Step 8: 人工确认 PR 飞书消息
+  - [ ] Substep 8.1 Verify: 在飞书群查找 `[Hermes MVP Test] PR opened` 对应分析消息。
+  - [ ] Substep 8.2 Verify: 确认消息包含 repo、编号、标题、作者、链接、摘要、建议处理动作。
+  - [ ] Substep 8.3 Verify: 记录 PR 飞书消息时间、可见内容摘要、异常现象。
+  - [ ] Substep 8.4 Verify: 把确认结果反馈给 agent，用于写入 spec Notes 与 PR 评论。
+- [ ] Step 9: Agent 自动整理验证记录与清理 GitHub 测试资源
+  - [ ] Substep 9.1 Implement: 更新 spec Notes，记录 GitHub repo、webhook IDs、test issue URL、test PR URL、delivery IDs、人工 Feishu 确认结果。
+  - [ ] Substep 9.2 Implement: 关闭测试 issue，并添加最终验证评论。
+  - [ ] Substep 9.3 Implement: 关闭测试 PR，并删除测试分支。
+  - [ ] Substep 9.4 Verify: 读取当前仓库 issue 与 PR 状态，确认测试资源已关闭。
+  - [ ] Substep 9.5 Verify: 读取 GitHub webhook 列表，确认 MVP 所需 webhooks 保留 active。
 
 ## Notes
 
