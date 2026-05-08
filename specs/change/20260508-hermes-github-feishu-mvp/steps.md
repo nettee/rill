@@ -64,7 +64,7 @@
 
 ## Step 6: 人工确认 issue 飞书消息
 
-状态：完成初次确认，并完成 prompt 修复与 retry 验证；等待人工确认 retry 消息是否已按预期进入目标飞书群。
+状态：完成。
 
 - 6.1 人工确认目标飞书群 `oc_3218e07b3504dd0635bbd10fd4872cab` 收到初次 issue 通知，但内容只有 `已发送到 Feishu 群。`。
 - 6.2 人工确认完整 GitHub Issue 分析消息进入了此前配置的 Hermes home channel。完整消息包含 repo、编号、标题、作者、链接、摘要、影响/风险、建议动作、优先级。
@@ -75,5 +75,6 @@
 - 6.3 Retry delivery：hook id `619555132`，delivery id `3818704905724494000`，event/action=`issues/opened`，status=`OK`，status_code=`202`，delivered_at=`2026-05-08T06:50:42.255Z`。
 - 6.3 Hermes retry 日志：`[webhook] POST event=issues route=github-issue-analysis prompt_len=585 delivery=3a55218a-4aaa-11f1-85d5-0511f8845a90`；agent response ready，response=`651 chars`，随后 webhook delivery 发送该 651 字符响应。
 - 6.4 已在 retry issue 添加验证评论：`https://github.com/nettee/rill/issues/2#issuecomment-4404201849`。
+- 6.4 人工确认 retry 消息已正常进入目标飞书群 `[H] Rill 测试`，内容为完整 issue 分析文本，包含 repo、编号、标题、作者、链接、摘要、影响/风险、建议动作等信息。
 
 偏差/坑：Step 6 发现了目标群只收到 agent 确认语、完整分析进入 home channel 的路由问题；根因是 prompt 让 agent 主动发送 Feishu，与 webhook delivery 重叠。修复后使用 retry issue 代替 GitHub redelivery，因为 redelivery API 需要额外 token scope。
