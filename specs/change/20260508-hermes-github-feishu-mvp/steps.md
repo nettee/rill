@@ -105,6 +105,7 @@
 - 8.3 测试：在 Hermes 源码仓库运行 `/Users/william/.hermes/hermes-agent/venv/bin/python -m pytest tests/gateway/test_webhook_adapter.py -q`，结果 `38 passed`。
 - 8.3 配置：已在 `/Users/william/.hermes/config.yaml` 的 `github-issue-analysis` 与 `github-pr-analysis` routes 添加 `actions: [opened]`，并执行 `hermes gateway restart`，`/health` 返回 200 OK。
 - 8.3 Smoke verify：手工向本地 `github-pr-analysis` route 发送签名正确的 `pull_request/synchronize` payload，返回 `HTTP/1.1 200 OK` 与 `{"status":"ignored","event":"pull_request","action":"synchronize"}`，确认不会触发 agent。
+- 8.3 GitHub verify：修复后再次 push Step 8 记录触发 `pull_request/synchronize` delivery id `3818708026712391700`，GitHub 记录 status=`OK`，status_code=`200`；此前未修复的 synchronize delivery id `3818706805033304000` 为 status_code=`202`。新的 200 表示 webhook 已在 action filter 处同步忽略，未进入 agent accepted 流程。
 - 8.4 人工确认 PR 飞书消息主体正常；额外 `synchronize` 消息的根因已修复，后续非 opened action 将在 webhook 层忽略。
 
 偏差/坑：为满足 MVP “只覆盖 opened” 标准，本步骤从纯配置调整为 Hermes webhook adapter 小幅增强；GitHub repository webhook 无法按 `action` 过滤，只能按 `pull_request` 事件类型过滤。
