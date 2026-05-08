@@ -25,14 +25,14 @@
 
 ## Step 3: 人工配置 Hermes webhook 与 Feishu delivery
 
-状态：部分完成，等待人工启动 Hermes Gateway 并验证 health/logs/base URL。
+状态：完成。
 
 - 3.1 已修改 `/Users/william/.hermes/config.yaml`，新增 `platforms.webhook.enabled=true`，端口 `8644`，`rate_limit=30`。
 - 3.2 已配置 `github-issue-analysis` route：生成并写入 route secret，`events=[issues]`，issue prompt，`deliver=feishu`，`deliver_extra.chat_id` 使用 `oc_3218e07b3504dd0635bbd10fd4872cab`。
 - 3.3 已配置 `github-pr-analysis` route：使用同一个 route secret，`events=[pull_request]`，PR prompt，`deliver=feishu`，`deliver_extra.chat_id` 使用同一个飞书群。
 - 3.4 已设置 `platforms.feishu.enabled=true`。当前只写入目标群 `chat_id`；Feishu app 凭据需依赖用户本机现有 Hermes Feishu 登录/配置。后续启动时若凭据缺失，Hermes/Feishu adapter 应暴露连接失败。
-- 3.5 待人工执行：启动或重启本地 Hermes Gateway。
-- 3.6 待人工执行：访问 `/health` 验证 webhook adapter。
-- 3.7 待人工确认：Hermes 日志显示两个 route 已加载，并提供公开 webhook base URL。
+- 3.5 人工已执行 `hermes gateway restart`，Hermes Gateway 已重启。
+- 3.6 `/health` 验证通过：`HTTP/1.1 200 OK`，body 为 `{"status": "ok", "platform": "webhook"}`。
+- 3.7 Hermes 日志确认 route 已加载：`[webhook] Listening on 0.0.0.0:8644 — routes: github-issue-analysis, github-pr-analysis`。公开 webhook base URL：`https://drinking-anne-proposition-quiz.trycloudflare.com`。
 
 偏差/坑：用户要求 agent 直接修改 Hermes config，原计划中 Step 3 的配置写入从人工操作调整为 agent 操作。第一次 Ruby 写入脚本因 prompt 中 `#{issue.number}` 被 Ruby 字符串插值解析而失败，发生在写文件前；改用 `%q{}` 原样字符串后写入成功。验证摘要显示两个 route 均有 secret、chat_id、正确 event 和 Feishu delivery。
