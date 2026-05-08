@@ -92,3 +92,19 @@
 - 7.5 已在测试 PR 添加验证评论：`https://github.com/nettee/rill/pull/3#issuecomment-4404324243`。
 
 偏差/坑：由于当前本地 `main` 已有多步记录提交且未推送，测试分支从本地 `main` 创建并推送，PR 会包含这些步骤记录提交。该行为符合当前 spec 验证需要，也让远端 PR 有实际变更可触发 webhook。
+
+## Step 8: 人工确认 PR 飞书消息
+
+状态：完成，并修复非 opened PR action 额外通知问题。
+
+- 8.1 人工确认目标飞书群 `[H] Rill 测试` 收到 `[Hermes MVP Test] PR opened` 对应完整 PR 分析消息。
+- 8.2 消息包含 repo、PR 编号、标题、作者、链接、摘要、review focus、风险/建议动作等信息。
+- 8.3 异常 1：飞书群额外收到一条 `synchronize` 消息，内容为“本次 webhook 事件为 synchronize，按要求仅在 opened 时进行分析”。原因是 Step 7 打开 PR 后又 push 了记录提交，GitHub 对 PR webhook 发送 `pull_request/synchronize`；Hermes 原本只支持 event type 过滤，仍会触发 agent 并通过 Feishu delivery 投递 no-op 说明。
+- 8.3 异常 2：PR 验证评论最初包含字面量 `\n`，原因是 `gh pr comment` 命令中换行转义方式错误。已用 GitHub API 更新 comment `4404324243` 为正常多行内容。
+- 8.3 修复：在 Hermes webhook adapter 增加 route-level `actions` 过滤，位置：`/Users/william/projects/hermes-agent/gateway/platforms/webhook.py` 与运行时副本 `/Users/william/.hermes/hermes-agent/gateway/platforms/webhook.py`。当 route 配置 `actions: [opened]` 时，payload `action` 不匹配会在 agent dispatch 前返回 `{"status":"ignored","event":"...","action":"..."}`，避免 no-op 消息投递到 Feishu。
+- 8.3 测试：在 Hermes 源码仓库运行 `/Users/william/.hermes/hermes-agent/venv/bin/python -m pytest tests/gateway/test_webhook_adapter.py -q`，结果 `38 passed`。
+- 8.3 配置：已在 `/Users/william/.hermes/config.yaml` 的 `github-issue-analysis` 与 `github-pr-analysis` routes 添加 `actions: [opened]`，并执行 `hermes gateway restart`，`/health` 返回 200 OK。
+- 8.3 Smoke verify：手工向本地 `github-pr-analysis` route 发送签名正确的 `pull_request/synchronize` payload，返回 `HTTP/1.1 200 OK` 与 `{"status":"ignored","event":"pull_request","action":"synchronize"}`，确认不会触发 agent。
+- 8.4 人工确认 PR 飞书消息主体正常；额外 `synchronize` 消息的根因已修复，后续非 opened action 将在 webhook 层忽略。
+
+偏差/坑：为满足 MVP “只覆盖 opened” 标准，本步骤从纯配置调整为 Hermes webhook adapter 小幅增强；GitHub repository webhook 无法按 `action` 过滤，只能按 `pull_request` 事件类型过滤。
