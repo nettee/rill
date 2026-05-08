@@ -81,6 +81,14 @@
 
 ## Step 7: Agent 自动触发 PR webhook 验证
 
-状态：进行中。
+状态：完成，等待 Step 8 人工确认飞书群消息内容。
 
 - 7.1 已基于当前本地 `main` 创建测试分支 `hermes-mvp-test-20260508`。本节记录变更同时作为无害文档/spec 变更，用于打开测试 PR。
+- 7.1 已提交并推送测试分支，提交 `27bfac5 step: start pr webhook verification`。
+- 7.2 已打开测试 PR：`https://github.com/nettee/rill/pull/3`，标题 `[Hermes MVP Test] PR opened`，head=`hermes-mvp-test-20260508`，base=`main`，作者 `nettee`，创建时间 `2026-05-08T07:03:46Z`。
+- 7.3 GitHub PR webhook recent delivery 确认收到 `pull_request` / `opened`。
+- 7.4 Delivery HTTP response：hook id `619555148`，delivery id `3818706595582312400`，status=`OK`，status_code=`202`，delivered_at=`2026-05-08T07:03:49.158Z`。
+- 7.4 Hermes Gateway 日志确认收到事件：`[webhook] POST event=pull_request route=github-pr-analysis prompt_len=736 delivery=0f3b4950-4aac-11f1-8cc9-2e93f8556bda`；随后 agent response ready，response=`852 chars`，webhook delivery 已发送该响应。
+- 7.5 已在测试 PR 添加验证评论：`https://github.com/nettee/rill/pull/3#issuecomment-4404324243`。
+
+偏差/坑：由于当前本地 `main` 已有多步记录提交且未推送，测试分支从本地 `main` 创建并推送，PR 会包含这些步骤记录提交。该行为符合当前 spec 验证需要，也让远端 PR 有实际变更可触发 webhook。
